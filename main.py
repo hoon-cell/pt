@@ -4,17 +4,16 @@ import time
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from google import genai
+import google.generativeai as genai
 
 app = FastAPI()
 
 # ── Keep-Alive: 10분마다 자기 자신에 핑 (Render 슬립 방지) ────
 def keep_alive():
-    # 서버 완전 기동 후 시작되도록 60초 대기
     time.sleep(60)
     url = os.environ.get("RENDER_EXTERNAL_URL", "")
     if not url:
-        print("[keep-alive] RENDER_EXTERNAL_URL 환경변수 없음 — 슬립 방지 비활성")
+        print("[keep-alive] RENDER_EXTERNAL_URL 없음 — 슬립 방지 비활성")
         return
     ping_url = f"{url}/ping"
     while True:
@@ -23,11 +22,11 @@ def keep_alive():
             print(f"[keep-alive] ping → {r.status_code}")
         except Exception as e:
             print(f"[keep-alive] 오류: {e}")
-        time.sleep(600)  # 10분
+        time.sleep(600)
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# ── 헬스체크 엔드포인트 (keep-alive 핑 대상) ────────────────────
+# ── 헬스체크 ────────────────────────────────────────────────────
 @app.get("/ping")
 def ping():
     return {"status": "ok"}
@@ -39,7 +38,7 @@ class TripRequest(BaseModel):
     location: str
     member_summary: str
 
-# ── 리포트 생성 엔드포인트 ──────────────────────────────────────
+# ── 리포트 생성 ─────────────────────────────────────────────────
 @app.post("/api/generate-trip")
 def generate_trip(request: TripRequest):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -47,7 +46,9 @@ def generate_trip(request: TripRequest):
         raise HTTPException(status_code=500, detail="서버에 API 키가 설정되지 않았습니다.")
 
     try:
-        client = genai.Client(api_key=api_key)
+        # ── AQ 키 방식: google-generativeai 라이브러리 사용 ──
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
 
         prompt = f"""
 당신은 전세계 최고급 맞춤형 여행사 'Perfect Trip'의 AI 수석 설계사입니다.
@@ -87,10 +88,7 @@ def generate_trip(request: TripRequest):
                         ISTJ, ISFJ, ESTJ, ESFJ,
                         ISTP, ISFP, ESTP, ESFP
 """
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
+        response = model.generate_content(prompt)
         return {"result": response.text}
 
     except Exception as e:
