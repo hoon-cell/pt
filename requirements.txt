@@ -2,4 +2,5 @@ fastapi
 uvicorn
 pydantic
 google-genai>=1.0.0
+google-generativeai
 requests
