@@ -4,8 +4,6 @@ import time
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from google import genai
-from google.genai import types
 
 app = FastAPI()
 
@@ -15,10 +13,9 @@ def keep_alive():
     url = os.environ.get("RENDER_EXTERNAL_URL", "")
     if not url:
         return
-    ping_url = f"{url}/ping"
     while True:
         try:
-            r = requests.get(ping_url, timeout=10)
+            r = requests.get(f"{url}/ping", timeout=10)
             print(f"[keep-alive] ping → {r.status_code}")
         except Exception as e:
             print(f"[keep-alive] 오류: {e}")
@@ -30,6 +27,29 @@ threading.Thread(target=keep_alive, daemon=True).start()
 def ping():
     return {"status": "ok"}
 
+@app.get("/test-import")
+def test_import():
+    """패키지 설치 확인용 엔드포인트"""
+    results = {}
+    try:
+        import google.generativeai as g1
+        results["google-generativeai"] = "OK"
+    except Exception as e:
+        results["google-generativeai"] = str(e)
+    try:
+        from google import genai
+        results["google-genai"] = "OK"
+    except Exception as e:
+        results["google-genai"] = str(e)
+    try:
+        import pkg_resources
+        pkgs = [str(p) for p in pkg_resources.working_set]
+        google_pkgs = [p for p in pkgs if "google" in p.lower()]
+        results["google_packages"] = google_pkgs
+    except Exception as e:
+        results["pkg_list_error"] = str(e)
+    return results
+
 class TripRequest(BaseModel):
     duration: str
     budget: str
@@ -40,13 +60,33 @@ class TripRequest(BaseModel):
 def generate_trip(request: TripRequest):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="서버에 API 키가 설정되지 않았습니다.")
+        raise HTTPException(status_code=500, detail="API 키 없음")
+
+    # 어떤 패키지가 설치됐는지에 따라 자동 선택
+    try:
+        from google import genai as google_genai
+        client = google_genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=_build_prompt(request),
+        )
+        return {"result": response.text}
+    except ImportError:
+        pass
 
     try:
-        # AQ 키는 google.genai의 Client에 직접 전달
-        client = genai.Client(api_key=api_key)
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(_build_prompt(request))
+        return {"result": response.text}
+    except ImportError:
+        pass
 
-        prompt = f"""
+    raise HTTPException(status_code=500, detail="Gemini 패키지가 설치되지 않았습니다.")
+
+def _build_prompt(request: TripRequest) -> str:
+    return f"""
 당신은 전세계 최고급 맞춤형 여행사 'Perfect Trip'의 AI 수석 설계사입니다.
 아래 조건에 맞춰, 한글(HWP) 또는 MS 워드(Word)에 복사·붙여넣기하여 바로 출력할 수 있는
 완성형 리포트를 작성해 주세요.
@@ -84,11 +124,3 @@ def generate_trip(request: TripRequest):
                         ISTJ, ISFJ, ESTJ, ESFJ,
                         ISTP, ISFP, ESTP, ESFP
 """
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-        )
-        return {"result": response.text}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
