@@ -4,16 +4,16 @@ import time
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 app = FastAPI()
 
-# ── Keep-Alive: 10분마다 자기 자신에 핑 (Render 슬립 방지) ────
+# ── Keep-Alive ───────────────────────────────────────────────────
 def keep_alive():
     time.sleep(60)
     url = os.environ.get("RENDER_EXTERNAL_URL", "")
     if not url:
-        print("[keep-alive] RENDER_EXTERNAL_URL 없음 — 슬립 방지 비활성")
         return
     ping_url = f"{url}/ping"
     while True:
@@ -26,19 +26,16 @@ def keep_alive():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# ── 헬스체크 ────────────────────────────────────────────────────
 @app.get("/ping")
 def ping():
     return {"status": "ok"}
 
-# ── 요청 데이터 구조 ────────────────────────────────────────────
 class TripRequest(BaseModel):
     duration: str
     budget: str
     location: str
     member_summary: str
 
-# ── 리포트 생성 ─────────────────────────────────────────────────
 @app.post("/api/generate-trip")
 def generate_trip(request: TripRequest):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -46,9 +43,8 @@ def generate_trip(request: TripRequest):
         raise HTTPException(status_code=500, detail="서버에 API 키가 설정되지 않았습니다.")
 
     try:
-        # ── AQ 키 방식: google-generativeai 라이브러리 사용 ──
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        # AQ 키는 google.genai의 Client에 직접 전달
+        client = genai.Client(api_key=api_key)
 
         prompt = f"""
 당신은 전세계 최고급 맞춤형 여행사 'Perfect Trip'의 AI 수석 설계사입니다.
@@ -88,7 +84,10 @@ def generate_trip(request: TripRequest):
                         ISTJ, ISFJ, ESTJ, ESFJ,
                         ISTP, ISFP, ESTP, ESFP
 """
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+        )
         return {"result": response.text}
 
     except Exception as e:
