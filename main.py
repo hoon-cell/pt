@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import traceback
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -93,4 +94,5 @@ def generate_trip(request: TripRequest):
         return {"result": response.text}
 
     except Exception as e:
+        print(f"[ERROR] generate_trip 실패:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
