@@ -88,7 +88,7 @@ def generate_trip(request: TripRequest):
                         ISTP, ISFP, ESTP, ESFP
 """
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.0-flash-lite',
             contents=prompt
         )
         return {"result": response.text}
