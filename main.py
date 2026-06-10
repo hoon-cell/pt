@@ -5,7 +5,6 @@ import traceback
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from google import genai
 
 app = FastAPI()
 
@@ -40,7 +39,6 @@ class TripRequest(BaseModel):
     member_summary: str
 
 # ── 재시도 모델 순서 및 대기 시간 ─────────────────────────────
-# 가벼운 모델 우선 → 429/503 나면 다른 모델로 전환
 MODELS = [
     'gemini-2.0-flash',
     'gemini-2.0-flash',
@@ -49,8 +47,25 @@ MODELS = [
 ]
 WAITS = [0, 10, 20, 30]
 
-# 재시도 대상 에러 키워드
 RETRY_KEYWORDS = ['429', '503', 'RESOURCE_EXHAUSTED', 'UNAVAILABLE', 'quota']
+
+# ── Gemini API 직접 HTTP 호출 ─────────────────────────────────
+def call_gemini(api_key: str, model: str, prompt: str) -> str:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,        # AQ... 키는 이 헤더로 전달
+    }
+    body = {
+        "contents": [
+            {"parts": [{"text": prompt}]}
+        ]
+    }
+    resp = requests.post(url, headers=headers, json=body, timeout=180)
+    if resp.status_code != 200:
+        raise Exception(f"{resp.status_code} {resp.json()}")
+    data = resp.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
 
 # ── 리포트 생성 엔드포인트 ────────────────────────────────────
 @app.post("/api/generate-trip")
@@ -98,7 +113,6 @@ def generate_trip(request: TripRequest):
                         ISTP, ISFP, ESTP, ESFP
 """
 
-    client = genai.Client(api_key=api_key)
     last_error = None
 
     for attempt, (model_name, wait_sec) in enumerate(zip(MODELS, WAITS)):
@@ -108,27 +122,21 @@ def generate_trip(request: TripRequest):
 
         try:
             print(f"[attempt {attempt+1}] 모델: {model_name}")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt
-            )
+            result = call_gemini(api_key, model_name, prompt)
             print(f"[success] 모델 {model_name} 성공")
-            return {"result": response.text}
+            return {"result": result}
 
         except Exception as e:
             err_str = str(e)
             last_error = e
             print(f"[ERROR] 시도 {attempt+1} 실패 (모델: {model_name}):\n{traceback.format_exc()}")
 
-            # 재시도 대상 에러가 아니면 즉시 중단
             if not any(kw in err_str for kw in RETRY_KEYWORDS):
                 print(f"[abort] 재시도 불필요한 에러 — 즉시 중단")
                 break
 
-            # 마지막 시도였으면 루프 종료
             if attempt == len(MODELS) - 1:
                 print(f"[abort] 모든 재시도 소진")
 
-    # 모든 시도 실패
-    print(f"[FINAL ERROR]:\n{traceback.format_exc()}")
+    print(f"[FINAL ERROR]: {last_error}")
     raise HTTPException(status_code=500, detail=f"모든 모델 시도 실패: {str(last_error)}")
