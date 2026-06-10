@@ -4,3 +4,5 @@ pydantic
 google-genai>=1.0.0
 google-generativeai
 requests
+google-auth
+google-auth-httplib2
