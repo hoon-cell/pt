@@ -42,12 +42,12 @@ class TripRequest(BaseModel):
 # ── 재시도 모델 순서 및 대기 시간 ─────────────────────────────
 # 가벼운 모델 우선 → 429/503 나면 다른 모델로 전환
 MODELS = [
-    'gemini-2.0-flash-lite',   # 1차: 가장 가볍고 무료 할당량 많음
-    'gemini-1.5-flash',        # 2차: 안정적
-    'gemini-2.0-flash-lite',   # 3차: 10초 대기 후 재시도
-    'gemini-1.5-flash',        # 4차: 마지막 시도
+    'gemini-2.0-flash',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-lite',
 ]
-WAITS = [0, 5, 10, 20]
+WAITS = [0, 10, 20, 30]
 
 # 재시도 대상 에러 키워드
 RETRY_KEYWORDS = ['429', '503', 'RESOURCE_EXHAUSTED', 'UNAVAILABLE', 'quota']
