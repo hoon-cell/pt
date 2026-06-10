@@ -39,6 +39,19 @@ class TripRequest(BaseModel):
     location: str
     member_summary: str
 
+# ── 재시도 모델 순서 및 대기 시간 ─────────────────────────────
+# 가벼운 모델 우선 → 429/503 나면 다른 모델로 전환
+MODELS = [
+    'gemini-2.0-flash-lite',   # 1차: 가장 가볍고 무료 할당량 많음
+    'gemini-1.5-flash',        # 2차: 안정적
+    'gemini-2.0-flash-lite',   # 3차: 10초 대기 후 재시도
+    'gemini-1.5-flash',        # 4차: 마지막 시도
+]
+WAITS = [0, 5, 10, 20]
+
+# 재시도 대상 에러 키워드
+RETRY_KEYWORDS = ['429', '503', 'RESOURCE_EXHAUSTED', 'UNAVAILABLE', 'quota']
+
 # ── 리포트 생성 엔드포인트 ────────────────────────────────────
 @app.post("/api/generate-trip")
 def generate_trip(request: TripRequest):
@@ -46,10 +59,7 @@ def generate_trip(request: TripRequest):
     if not api_key:
         raise HTTPException(status_code=500, detail="서버에 API 키가 설정되지 않았습니다.")
 
-    try:
-        client = genai.Client(api_key=api_key)
-
-        prompt = f"""
+    prompt = f"""
 당신은 전세계 최고급 맞춤형 여행사 'Perfect Trip'의 AI 수석 설계사입니다.
 아래 조건에 맞춰, 한글(HWP) 또는 MS 워드(Word)에 복사·붙여넣기하여 바로 출력할 수 있는
 완성형 리포트를 작성해 주세요.
@@ -87,12 +97,38 @@ def generate_trip(request: TripRequest):
                         ISTJ, ISFJ, ESTJ, ESFJ,
                         ISTP, ISFP, ESTP, ESFP
 """
-        response = client.models.generate_content(
-            model='gemini-2.0-flash-lite',
-            contents=prompt
-        )
-        return {"result": response.text}
 
-    except Exception as e:
-        print(f"[ERROR] generate_trip 실패:\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+    client = genai.Client(api_key=api_key)
+    last_error = None
+
+    for attempt, (model_name, wait_sec) in enumerate(zip(MODELS, WAITS)):
+        if wait_sec > 0:
+            print(f"[retry] {wait_sec}초 대기 후 {model_name} 재시도... ({attempt+1}/{len(MODELS)})")
+            time.sleep(wait_sec)
+
+        try:
+            print(f"[attempt {attempt+1}] 모델: {model_name}")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            print(f"[success] 모델 {model_name} 성공")
+            return {"result": response.text}
+
+        except Exception as e:
+            err_str = str(e)
+            last_error = e
+            print(f"[ERROR] 시도 {attempt+1} 실패 (모델: {model_name}):\n{traceback.format_exc()}")
+
+            # 재시도 대상 에러가 아니면 즉시 중단
+            if not any(kw in err_str for kw in RETRY_KEYWORDS):
+                print(f"[abort] 재시도 불필요한 에러 — 즉시 중단")
+                break
+
+            # 마지막 시도였으면 루프 종료
+            if attempt == len(MODELS) - 1:
+                print(f"[abort] 모든 재시도 소진")
+
+    # 모든 시도 실패
+    print(f"[FINAL ERROR]:\n{traceback.format_exc()}")
+    raise HTTPException(status_code=500, detail=f"모든 모델 시도 실패: {str(last_error)}")
